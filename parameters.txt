@@ -1,0 +1,53 @@
+########### clouds ###########
+# cloud for RGB-D camera
+#input_cloud=data/truss3.pcd
+input_cloud=data/15.pcd
+
+### test data
+# input_cloud=data/realSense02.pcd
+# input_cloud=data/intersection02.pcd
+
+########### voxel grid downsample ###########
+leaf_size=0.01
+
+########### statistical filter ###########
+# for Laser scan pointcloud of cylinders
+mean_k=10.0
+std_dev_mul_thresh=1.0
+
+########### point normals estimation & visualization ###########
+# for Laser scan pointcloud of cylinders
+k_search=10;
+
+coordinate_system_unit_length=0.10
+normals_dense=50
+normals_length=0.1
+
+########### plane extration ###########
+# for realsense02.pcd
+# pext_max_iter=100
+# pext_dis_thres=0.03
+
+# for intersection_02.pcd
+pext_nor_dis_wei=0.1
+pext_max_iter=10000
+pext_dis_thres=0.05
+
+########### cylinder segmentation ###########
+# numbers of poles
+nNum_poles=3
+
+cseg_nor_dis_wei=0.1
+cseg_max_iter=10000
+cseg_dis_thres=0.05
+
+cseg_min_rad=0.0
+cseg_max_rad=0.07
+
+
+########## pole Id match ###############
+# 10 degree 0.9848
+# 20 degree 0.939692
+# 30 degree 0.866
+#min_cos_angle=0.866
+min_cos_angle=10
