@@ -1023,13 +1023,13 @@ int main (int argc, char** argv)
     ros::NodeHandle nh;
     
     ros::Subscriber pc_sub = nh.subscribe("/camera/depth_registered/points", 1, CylinderLocalization_Callback);
-    ros::Publisher pc_publisher = nh.advertise<sensor_msgs::PointCloud2>("poles_pc", 1);
+    ros::Publisher pc_pub = nh.advertise<sensor_msgs::PointCloud2>("poles_pc", 1);
     
     double sample_rate = 1;
     ros::Rate naptime(sample_rate); // use to regulate loop rate 
     while (ros::ok())
     {        
-        pc_publisher.publish(transformed_pc_msg);
+        pc_pub.publish(transformed_pc_msg);
 
         static tf::TransformBroadcaster br;
         br.sendTransform(tf::StampedTransform(tf_transform, ros::Time::now(), "world", "camera_link"));
