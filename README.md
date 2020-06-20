@@ -4,6 +4,6 @@
 ## NOTE 
 
 - Ceres version >= 1.12
-- The start point and end point of lines in bim_vector_map.txt must be in decsending order.
+- The start point and end point of lines in bim_vector_map.txt must be in acsending order.
 - to execute the program, run `$ rosrun cylinders_localization cylinders_localization `
 - please run in the directory of cylinders_localization.
