@@ -987,6 +987,20 @@ Eigen::Matrix4d FineRegistration(std::vector<Line> &input_line, std::vector<Line
     return Final_transform;
 }
 
+void InitialPoseLastHandler (const geometry_msgs::PoseStamped::ConstPtr& init_pose_last)
+{
+    mutex_buf.lock();
+    init_pose_last_buf.push(init_pose_last);
+    mutex_buf.unlock();
+}
+
+void PointCloudLastHandler(const sensor_msgs::PointCloud2ConstPtr& point_cloud_last)
+{
+    mutex_buf.lock();
+    point_cloud_last_buf.push(point_cloud_last);
+    mutex_buf.unlock();
+}
+
 void TransformPointCloudPublish(pcl::PointCloud<pcl::PointXYZ>::Ptr source_pc, pcl::PointCloud<pcl::PointXYZ>::Ptr transformed_pc,
                                 Eigen::Matrix4d& trans_matrix)
 {
@@ -996,20 +1010,6 @@ void TransformPointCloudPublish(pcl::PointCloud<pcl::PointXYZ>::Ptr source_pc, p
     pcl::toROSMsg(*transformed_pc, transformed_pc_msg);
     transformed_pc_msg.header.frame_id = "/world";
     transformed_pc_msg.header.stamp = ros::Time::now();
-}
-
-void init_pose_last_handler (const geometry_msgs::PoseStamped::ConstPtr& init_pose_last)
-{
-    mutex_buf.lock();
-    init_pose_last_buf.push(init_pose_last);
-    mutex_buf.unlock();
-}
-
-void point_cloud_last_handler(const sensor_msgs::PointCloud2ConstPtr& point_cloud_last)
-{
-    mutex_buf.lock();
-    point_cloud_last_buf.push(point_cloud_last);
-    mutex_buf.unlock();
 }
 
 void Process()
@@ -1082,9 +1082,9 @@ int main (int argc, char** argv)
     ros::init(argc, argv, "cylinders_localization");
     ros::NodeHandle nh;
     
-    ros::Subscriber init_pose_sub = nh.subscribe("/vrpn_client_node/D435I/pose", 1, init_pose_last_handler);
+    ros::Subscriber init_pose_sub = nh.subscribe("/vrpn_client_node/D435I/pose", 1, InitialPoseLastHandler);
     
-    ros::Subscriber pc_sub = nh.subscribe("/camera/depth_registered/points", 1, point_cloud_last_handler);
+    ros::Subscriber pc_sub = nh.subscribe("/camera/depth_registered/points", 1, PointCloudLastHandler);
     
     ros::Publisher pc_pub = nh.advertise<sensor_msgs::PointCloud2>("/poles_pc", 1);
 
