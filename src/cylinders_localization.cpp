@@ -1,9 +1,6 @@
 // ROS
 #include <ros/ros.h>
-#include <image_transport/image_transport.h>
-#include <opencv2/highgui/highgui.hpp>
-#include <opencv2/core/core.hpp>
-#include <cv_bridge/cv_bridge.h>
+#include <geometry_msgs/PoseStamped.h>
 #include <sensor_msgs/image_encodings.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <pcl_conversions/pcl_conversions.h>
@@ -12,11 +9,13 @@
 
 #include <boost/thread/thread.hpp>
 #include <vector>
+#include <queue>
 #include <iostream>
 #include <string>
 #include <fstream>
+#include <mutex>
 
-#include "parameter_reader.h" // for parameterReader.txt
+#include "parameter_reader.h" // for parameters.txt
 #include "line.hpp" // Define a class Line derived from points using Eigen
 
 // PCL
@@ -41,12 +40,18 @@
 // Eigen
 #include <Eigen/Core>
 #include <Eigen/Geometry>
+// Ceres
 #include <ceres/ceres.h>
 
 using namespace std;
 
 sensor_msgs::PointCloud2 transformed_pc_msg;
-tf::Transform tf_transform;
+tf::Transform w_tf_c;
+tf::Transform mc_tf_marker;
+tf::Transform w_tf_init_c;
+std::queue<sensor_msgs::PointCloud2ConstPtr> point_cloud_last_buf;
+std::queue<geometry_msgs::PoseStamped::ConstPtr> init_pose_last_buf;
+std::mutex mutex_buf;
 
 // pose to optimize
 double parameters[7] = {0, 0, 0, 1, 0, 0, 0};
@@ -54,7 +59,9 @@ Eigen::Map<Eigen::Quaterniond> q_w_curr(parameters);
 Eigen::Map<Eigen::Vector3d> t_w_curr(parameters + 4);
 
 const int poles_num_in_map = 16; // refer to the number of pole in file bim_vector_map.txt
+std::vector<Line> lines_in_map;
 Eigen::Matrix4d initial_transform_matrix; // initial pose from UWB or coders of robot(what ever)
+
 
 // print euler angles (unit: degree)
 void PrintEulerAnglesDegreeAndTranslation (Eigen::Matrix4d matrix)
@@ -67,18 +74,16 @@ void PrintEulerAnglesDegreeAndTranslation (Eigen::Matrix4d matrix)
         << "Euler angles (degree) = " << euler_angles_degree.transpose() << "\n" << std::endl;
 }
 
-// read initial pose from file
-Eigen::Matrix4d ReadData()
+// read transform matrix from file
+Eigen::Matrix4d ReadData(std::string file_name)
 {
-    ifstream fin("./initial_pose.txt");
+    ifstream fin(file_name.c_str());
     if (!fin)
     {
-        cerr<<"please run in the directory included initial_pose.txt!"<<endl;
+        cerr<<"please run in the directory included " << file_name << "!"<<endl;
         exit(0);
     }
-    std::cout << "Initial pose : " << "\n" << initial_transform_matrix << '\n' << std::endl;
-    PrintEulerAnglesDegreeAndTranslation(initial_transform_matrix);
-    
+
     Eigen::Matrix4d matrix;
     Eigen::Vector4d v;
     for (int j = 0; j < 4; j++)
@@ -89,16 +94,33 @@ Eigen::Matrix4d ReadData()
         }
         matrix.row(j) = v;
     }
+    std::cout << "Transform matrix : " << "\n" << matrix << '\n' << std::endl;
+    PrintEulerAnglesDegreeAndTranslation(matrix);
     fin.close();
-    
+   
     return matrix;
 }
 
+tf::Transform TransformToTf(Eigen::Quaterniond q, Eigen::Vector3d t )
+{
+    tf::Transform tmp_tf;
+    tf::Quaternion q_tf;
+    tf::Vector3 t_tf(t(0), t(1), t(2));
+    tmp_tf.setOrigin(t_tf);
+    
+    q_tf.setW(q.w());
+    q_tf.setX(q.x());
+    q_tf.setY(q.y());
+    q_tf.setZ(q.z());
+    tmp_tf.setRotation(q_tf);
+    
+    return tmp_tf;
+}
 
 // 相机坐标系下杆件轴线坐标点变换到初始位姿
 void LineAssociateToMap(std::vector<Line> lines_in_cam, std::vector<Line>& poles_from_cam_to_map)
 {
-    initial_transform_matrix = ReadData();
+//     initial_transform_matrix = ReadData("initial_pose.txt");
     Eigen::Matrix3d initial_rotation_matrix = initial_transform_matrix.block(0,0,3,3);
     Eigen::Vector3d initial_translation = initial_transform_matrix.block(0,3,3,1);
 //     cout << "initial_rotation_matrix is: \n" << initial_rotation_matrix << endl;
@@ -106,7 +128,6 @@ void LineAssociateToMap(std::vector<Line> lines_in_cam, std::vector<Line>& poles
 //     Eigen::Quaterniond quat (initial_rotation_matrix);
     
     // Transformed to local coordinate
-//     poles_from_cam_to_map.reserve(lines_in_cam.size());
     for (int i = 0; i < lines_in_cam.size(); i++)
     {
 
@@ -120,13 +141,12 @@ void LineAssociateToMap(std::vector<Line> lines_in_cam, std::vector<Line>& poles
         l.SetPoints(transformed_pts, transformed_pte);
 //         lines_in_cam.at(i) = l;
         poles_from_cam_to_map.push_back(l);
-//         cout << i << " after transformed: "; lines_in_cam.at(i).PrintLine();
         cout << i << " after transformed: "; poles_from_cam_to_map.at(i).PrintLine();
     }
 //     cout << '\n';
 }
 
-void CylinderRecognition(std::vector<Line> &lines_in_cam, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud)
+void CylinderRecognition(std::vector<Line> &lines_in_cam, pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud)
 {
     // declare ParameterReader class object
     ParameterReader pd;
@@ -575,26 +595,23 @@ void GetSameLineOrientationWithMap (std::vector<Line> &source_lines, std::vector
         
         double dist_pte_pte = Eigen::Vector3d(target_pte - source_pte).norm();
         double dist_pte_pts = Eigen::Vector3d(target_pte - source_pts).norm();
-//         cout << "original orientation is: " << reverse_lines.at(n).GetOrientation().transpose() << endl;
+        cout << "original orientation is: " << reverse_lines.at(n).GetOrientation().transpose() << endl;
         if (dist_pte_pte > dist_pte_pts)
         {
             reverse_lines.at(n).ReverseOrientation();
-//             cout << "reverse orientation is: " << reverse_lines.at(n).GetOrientation().transpose() << endl;            
+            cout << "reverse orientation is: " << reverse_lines.at(n).GetOrientation().transpose() << endl;            
         }
     }
 }
 
 // find poles in map matched to those in camera
-std::vector<Line> PoleIdMatch (std::vector<Line> &lines_in_cam)
+std::vector<Line> PoleIdMatch (std::vector<Line> &lines_in_cam, std::vector<Line> &lines_in_map)
 {
     ParameterReader pd;
     
     int pole_id;
     std::vector<Line> line_matched;
-    std::vector<Line> lines_in_map;
     line_matched.reserve(lines_in_cam.size());
-    lines_in_map.reserve(poles_num_in_map);
-    lines_in_map = GetLinesInMap();
     
     // 
     /* Get the smalleast distance and angle of line in map compared with the line in camera
@@ -611,10 +628,11 @@ std::vector<Line> PoleIdMatch (std::vector<Line> &lines_in_cam)
         double min_dist = 10;  // 10 meters
         const double min_cos_angle = atof(pd.getData("min_cos_angle").c_str()); // about cos 10° = 0.9848
         int min_dist_pole_id = 0, min_cos_angle_pole_id = 0;
-//         cout << "[" << i << "] pole:" << endl;
+//         cout << "[" << i << "] lines_in_cam:"; lines_in_cam.at(i).PrintLine();
         for (int j = 0; j < lines_in_map.size(); j++)
         {
             // if lines parallel
+//             cout << "[" << j << "] lines_in_map:"; lines_in_map.at(j).PrintLine();
             double cos_angle = AngleBetweenTwoLines(lines_in_cam.at(i), lines_in_map.at(j));
 //             std::cout << "[" << j << "]" << "cos_angle between two lines : " << cos_angle << std::endl;
             if ( cos_angle < min_cos_angle)  // means angle(degree) difference < 10°
@@ -879,19 +897,6 @@ Eigen::Matrix4d CoarseRegistration(std::vector<Line> &input_line, std::vector<Li
     return coarse_registration_matrix;
 }
 
-void BroadcastTf(Eigen::Quaterniond q_w_curr, Eigen::Vector3d t_w_curr )
-{
-    tf::Quaternion q;
-    tf_transform.setOrigin(tf::Vector3(t_w_curr(0),
-                                       t_w_curr(1),
-                                       t_w_curr(2)));
-    q.setW(q_w_curr.w());
-    q.setX(q_w_curr.x());
-    q.setY(q_w_curr.y());
-    q.setZ(q_w_curr.z());
-    tf_transform.setRotation(q);
-}
-
 Eigen::Matrix4d FineRegistration(std::vector<Line> &input_line, std::vector<Line> &target_line) 
 {
 //     std::cout << "Before ceres non linear optimized: " << endl;
@@ -970,69 +975,131 @@ Eigen::Matrix4d FineRegistration(std::vector<Line> &input_line, std::vector<Line
 //     Eigen::Matrix3d rot = Final_transform.block(0,0,3,3);
 //     Eigen::Quaterniond q_w_cam = Eigen::Quaterniond(rot);
 //     Eigen::Vector3d t_w_cam = Final_transform.block(0,3,3,1);
-//     BroadcastTf(q_w_cam, t_w_cam);
+//     w_tf_c = TransformToTf(q_w_cam, t_w_cam);
     Eigen::Matrix4d Final_transform = Eigen::Matrix4d::Identity();
     Final_transform.block(0,0,3,3) = q_w_curr.toRotationMatrix();
     Final_transform.block(0,3,3,1) = t_w_curr;
 
-    BroadcastTf(q_w_curr, t_w_curr);    
+    w_tf_c = TransformToTf(q_w_curr, t_w_curr);    
     std::cout << "Final transform matrix is: \n" << Final_transform << std::endl;
     PrintEulerAnglesDegreeAndTranslation(Final_transform);    
 }
 
-void TransformPointCloudPublish(pcl::PointCloud<pcl::PointXYZ>::Ptr source_pc, pcl::PointCloud<pcl::PointXYZ>::Ptr& transformed_pc, Eigen::Matrix4d& trans_matrix)
+void TransformPointCloudPublish(pcl::PointCloud<pcl::PointXYZ>::Ptr& source_pc, pcl::PointCloud<pcl::PointXYZ>::Ptr& transformed_pc, Eigen::Matrix4d& trans_matrix)
 {
     pcl::transformPointCloud (*source_pc, *transformed_pc, trans_matrix);
     //Convert the transformed_pc to ROS message
     pcl::toROSMsg(*transformed_pc, transformed_pc_msg);
-    transformed_pc_msg.header.frame_id = "world";
+    transformed_pc_msg.header.frame_id = "/world";
     transformed_pc_msg.header.stamp = ros::Time::now();
 }
 
-void CylinderLocalization_Callback(const sensor_msgs::PointCloud2ConstPtr& pc_msg)
+void init_pose_last_handler (const geometry_msgs::PoseStamped::ConstPtr& init_pose_last)
 {
-    ROS_INFO("In callback!");
-    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZ>);
-    pcl::fromROSMsg (*pc_msg, *cloud);
-
-    std::vector<Line> poles_in_cam;
-    CylinderRecognition(poles_in_cam, cloud);  // Get axis of poles in a depth camera
-    
-    std::vector<Line> poles_from_cam_to_map;
-    poles_from_cam_to_map.reserve(poles_in_cam.size());
-    LineAssociateToMap(poles_in_cam, poles_from_cam_to_map);  // Tranform to local coordinate
-    
-    std::vector<Line> pole_matched;
-    pole_matched = PoleIdMatch(poles_from_cam_to_map); // Find those poles matched to the camera
-//     GetSameLineOrientationWithMap(poles_in_cam, pole_matched); 
-    GetSameLineOrientationWithMap(poles_from_cam_to_map, pole_matched, poles_in_cam); 
-    
-    Eigen::Matrix4d pose_estimated_from_coarse_registration;
-    pose_estimated_from_coarse_registration = CoarseRegistration(poles_in_cam, pole_matched);
-    
-    Eigen::Matrix4d pose_estimated_final;
-    pose_estimated_final = FineRegistration(poles_in_cam, pole_matched);
-    
-    pcl::PointCloud<pcl::PointXYZ>::Ptr transformed_pc (new pcl::PointCloud<pcl::PointXYZ>);
-    TransformPointCloudPublish(cloud, transformed_pc, pose_estimated_final);
+    mutex_buf.lock();
+    init_pose_last_buf.push(init_pose_last);
+    mutex_buf.unlock();
 }
+
+void point_cloud_last_handler(const sensor_msgs::PointCloud2ConstPtr& point_cloud_last)
+{
+    mutex_buf.lock();
+    point_cloud_last_buf.push(point_cloud_last);
+    mutex_buf.unlock();
+}
+
+void Process()
+{
+    if (!init_pose_last_buf.empty() && !point_cloud_last_buf.empty())
+    {
+        mutex_buf.lock();
+        
+        /* transform matrix initialization
+         */
+        Eigen::Quaterniond q_init( init_pose_last_buf.front()->pose.orientation.w,
+                                   init_pose_last_buf.front()->pose.orientation.x,
+                                   init_pose_last_buf.front()->pose.orientation.y,
+                                   init_pose_last_buf.front()->pose.orientation.z );
+        Eigen::Vector3d t_inti;
+        t_inti  << init_pose_last_buf.front()->pose.position.x,
+                   init_pose_last_buf.front()->pose.position.y,
+                   init_pose_last_buf.front()->pose.position.z;
+        init_pose_last_buf.pop();
+        
+        initial_transform_matrix.block(0,0,3,3) = q_init.toRotationMatrix();
+        initial_transform_matrix.block(0,3,3,1) = t_inti;
+        
+        Eigen::Quaterniond mc_q_marker = q_init;
+        Eigen::Vector3d mc_t_marker = t_inti;
+//         mc_tf_marker = TransformToTf(mc_q_marker, mc_t_marker); // test marker position
+        
+        Eigen::Matrix4d mTc = ReadData("mTc.txt");
+        initial_transform_matrix = initial_transform_matrix * mTc;
+        Eigen::Matrix3d tmp_R = initial_transform_matrix.block(0,0,3,3);
+        q_init = Eigen::Quaterniond (tmp_R);
+        t_inti = initial_transform_matrix.block(0,3,3,1);
+        w_tf_init_c = TransformToTf(q_init, t_inti);
+        
+        /* Resgitration
+         * 
+         */      
+        pcl::PointCloud<pcl::PointXYZ>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZ>);
+        pcl::fromROSMsg (*point_cloud_last_buf.front(), *cloud);
+        point_cloud_last_buf.pop();
+
+        std::vector<Line> poles_in_cam;
+        CylinderRecognition(poles_in_cam, cloud);  // Get axis of poles in a depth camera
+        
+        std::vector<Line> poles_from_cam_to_map;
+        poles_from_cam_to_map.reserve(poles_in_cam.size());
+        LineAssociateToMap(poles_in_cam, poles_from_cam_to_map);  // Tranform to local coordinate
+        
+        std::vector<Line> pole_matched;
+        pole_matched = PoleIdMatch(poles_from_cam_to_map, lines_in_map); // Find those poles matched to the camera
+        GetSameLineOrientationWithMap(poles_from_cam_to_map, pole_matched, poles_in_cam); 
+        
+        Eigen::Matrix4d pose_estimated_from_coarse_registration;
+        pose_estimated_from_coarse_registration = CoarseRegistration(poles_in_cam, pole_matched);
+        
+        Eigen::Matrix4d pose_estimated_final;
+        pose_estimated_final = FineRegistration(poles_in_cam, pole_matched);
+        
+        pcl::PointCloud<pcl::PointXYZ>::Ptr transformed_pc (new pcl::PointCloud<pcl::PointXYZ>);
+        TransformPointCloudPublish(cloud, transformed_pc, pose_estimated_final);         
+        
+        mutex_buf.unlock();
+    }        
+}
+    
+
 
 int main (int argc, char** argv)
 {   
     ros::init(argc, argv, "cylinders_localization");
     ros::NodeHandle nh;
     
-    ros::Subscriber pc_sub = nh.subscribe("/camera/depth_registered/points", 1, CylinderLocalization_Callback);
-    ros::Publisher pc_publisher = nh.advertise<sensor_msgs::PointCloud2>("poles_pc", 1);
+    ros::Subscriber init_pose_sub = nh.subscribe("/vrpn_client_node/D435I/pose", 1, init_pose_last_handler);
+    
+    ros::Subscriber pc_sub = nh.subscribe("/camera/depth_registered/points", 1, point_cloud_last_handler);
+    
+    ros::Publisher pc_pub = nh.advertise<sensor_msgs::PointCloud2>("/poles_pc", 1);
+
+    lines_in_map = GetLinesInMap();
     
     double sample_rate = 1;
     ros::Rate naptime(sample_rate); // use to regulate loop rate 
     while (ros::ok())
-    {        
-        pc_publisher.publish(transformed_pc_msg);
+    {
+        Process();
+        
+        pc_pub.publish(transformed_pc_msg);
 
         static tf::TransformBroadcaster br;
-        br.sendTransform(tf::StampedTransform(tf_transform, ros::Time::now(), "world", "camera_link"));
+        br.sendTransform(tf::StampedTransform(w_tf_c, ros::Time::now(), "/world", "/camera"));
+        
+//         br.sendTransform(tf::StampedTransform(mc_tf_marker, ros::Time::now(), "/world", "/marker")); // test marker pose
+        
+        br.sendTransform(tf::StampedTransform(w_tf_init_c, ros::Time::now(), "/world", "/ground_truth"));
         
         ros::spinOnce(); //allow data update from callback; 
         naptime.sleep(); // wait for remainder of specified period; 
