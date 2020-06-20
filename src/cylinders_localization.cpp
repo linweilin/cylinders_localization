@@ -982,12 +982,16 @@ Eigen::Matrix4d FineRegistration(std::vector<Line> &input_line, std::vector<Line
 
     w_tf_c = TransformToTf(q_w_curr, t_w_curr);    
     std::cout << "Final transform matrix is: \n" << Final_transform << std::endl;
-    PrintEulerAnglesDegreeAndTranslation(Final_transform);    
+    PrintEulerAnglesDegreeAndTranslation(Final_transform);
+    
+    return Final_transform;
 }
 
-void TransformPointCloudPublish(pcl::PointCloud<pcl::PointXYZ>::Ptr& source_pc, pcl::PointCloud<pcl::PointXYZ>::Ptr& transformed_pc, Eigen::Matrix4d& trans_matrix)
+void TransformPointCloudPublish(pcl::PointCloud<pcl::PointXYZ>::Ptr source_pc, pcl::PointCloud<pcl::PointXYZ>::Ptr transformed_pc,
+                                Eigen::Matrix4d& trans_matrix)
 {
     pcl::transformPointCloud (*source_pc, *transformed_pc, trans_matrix);
+    
     //Convert the transformed_pc to ROS message
     pcl::toROSMsg(*transformed_pc, transformed_pc_msg);
     transformed_pc_msg.header.frame_id = "/world";
