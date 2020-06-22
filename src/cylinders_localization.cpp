@@ -62,6 +62,9 @@ const int poles_num_in_map = 16; // refer to the number of pole in file bim_vect
 std::vector<Line> lines_in_map;
 Eigen::Matrix4d initial_transform_matrix; // initial pose from UWB or coders of robot(what ever)
 
+const double deg2rad = M_PI / 180;
+const double rad2deg = 180 / M_PI;
+
 
 // print euler angles (unit: degree)
 void PrintEulerAnglesDegreeAndTranslation (Eigen::Matrix4d matrix)
@@ -69,7 +72,7 @@ void PrintEulerAnglesDegreeAndTranslation (Eigen::Matrix4d matrix)
     Eigen::Vector3d trans = matrix.block(0,3,3,1);
     Eigen::Matrix3d block = matrix.block(0,0,3,3);
     Eigen::Vector3d euler_angles = block.eulerAngles(0, 1, 2);
-    Eigen::Vector3d euler_angles_degree = euler_angles * 180 / M_PI; // rad to degree;
+    Eigen::Vector3d euler_angles_degree = euler_angles * rad2deg; // rad to degree;
     std::cout << "Translation = " << trans.transpose() << "\n"
         << "Euler angles (degree) = " << euler_angles_degree.transpose() << "\n" << std::endl;
 }
@@ -471,7 +474,6 @@ void CylinderRecognition(std::vector<Line> &lines_in_cam, pcl::PointCloud<pcl::P
         // visualize axis line
         pcl::PointXYZ pStartIntersec (start_intersection_point(0), start_intersection_point(1), start_intersection_point(2));
         pcl::PointXYZ pEndIntersec (end_intersection_point(0), end_intersection_point(1), end_intersection_point(2));
-//         viewer_bounding_box->addArrow(pStartIntersec, pEndIntersec, 1.0, 0.0, 0.0, true,"Red axis");
         
         // Store lines
         Line temp_line(start_intersection_point,end_intersection_point);
@@ -531,7 +533,7 @@ double AngleBetweenTwoLines (Line &l1, Line &l2)
     double acos_denominator_R = v2.norm();
     double acos_angle = acos_numerator / (acos_denominator_L * acos_denominator_R);
 //     std::cout << "cos angle between two lines : " << cos_angle << std::endl;
-    double cos_angle = std::acos(acos_angle) * 180 / M_PI; // rad to degree
+    double cos_angle = std::acos(acos_angle) * rad2deg; // rad to degree
     return cos_angle;
 }
 
@@ -613,14 +615,11 @@ std::vector<Line> PoleIdMatch (std::vector<Line> &lines_in_cam, std::vector<Line
     std::vector<Line> line_matched;
     line_matched.reserve(lines_in_cam.size());
     
-    // 
     /* Get the smalleast distance and angle of line in map compared with the line in camera
      * cos_angle decreases in [0,pi], so can be compared by its value directly
-     */
-    
+     */    
     for (int i = 0; i < lines_in_cam.size(); i++)
     {
-        // 
         vector<double> lines_dist, lines_angle;
         lines_dist.reserve(lines_in_map.size());
         lines_angle.reserve(lines_in_map.size());
@@ -648,8 +647,8 @@ std::vector<Line> PoleIdMatch (std::vector<Line> &lines_in_cam, std::vector<Line
         }
         pole_id = min_dist_pole_id;
         line_matched.push_back(lines_in_map.at(pole_id));
-        cout << "pole_id [" << pole_id << "] :";
-        lines_in_map.at(pole_id).PrintLine();
+//         cout << "pole_id [" << pole_id << "] :";
+//         lines_in_map.at(pole_id).PrintLine();
     }
     
     return line_matched;
@@ -889,10 +888,6 @@ Eigen::Matrix4d CoarseRegistration(std::vector<Line> &input_line, std::vector<Li
     
     cout << "The CoarseRegistration matrix is: \n" << coarse_registration_matrix << endl;
     PrintEulerAnglesDegreeAndTranslation(coarse_registration_matrix);
-//     cout << "The CoarseRegistration matrix(inversed) is: \n" << coarse_registration_matrix.inverse() << endl;
-//     PrintEulerAnglesDegreeAndTranslation(coarse_registration_matrix.inverse());
-//     cout << "After CoarseRegistration(inversed): \n" << initial_transform_matrix * coarse_registration_matrix.inverse() << endl;
-//     PrintEulerAnglesDegreeAndTranslation(initial_transform_matrix * coarse_registration_matrix.inverse());
     
     return coarse_registration_matrix;
 }
@@ -911,6 +906,12 @@ Eigen::Matrix4d FineRegistration(std::vector<Line> &input_line, std::vector<Line
     T_before_optimized.block(0,3,3,1) = t_w_curr;
 //     std::cout << "transform matrix is: " << "\n" << T_before_optimized << endl;
     std::cout << std::endl;
+    
+    // for checking the pose error of fine registration
+    Eigen::Vector3d coarse_registration_trans = T_before_optimized.block(0,3,3,1);
+    Eigen::Matrix3d coarse_registration_rot = T_before_optimized.block(0,0,3,3);
+    Eigen::Vector3d coarse_registration_angles = coarse_registration_rot.eulerAngles(0, 1, 2);
+    Eigen::Vector3d coarse_registration_angles_degree = coarse_registration_angles * rad2deg; // rad to degree;
 
     //ceres::LossFunction *loss_function = NULL;
     ceres::LossFunction *loss_function = new ceres::HuberLoss(0.1);
@@ -971,20 +972,46 @@ Eigen::Matrix4d FineRegistration(std::vector<Line> &input_line, std::vector<Line
 //     T_optimized.block(0,0,3,3) = q_w_curr.toRotationMatrix();
 //     T_optimized.block(0,3,3,1) = t_w_curr;
 // 
-//     Eigen::Matrix4d Final_transform = initial_transform_matrix * T_optimized.inverse();
-//     Eigen::Matrix3d rot = Final_transform.block(0,0,3,3);
+//     Eigen::Matrix4d final_transform = initial_transform_matrix * T_optimized.inverse();
+//     Eigen::Matrix3d rot = final_transform.block(0,0,3,3);
 //     Eigen::Quaterniond q_w_cam = Eigen::Quaterniond(rot);
-//     Eigen::Vector3d t_w_cam = Final_transform.block(0,3,3,1);
+//     Eigen::Vector3d t_w_cam = final_transform.block(0,3,3,1);
 //     w_tf_c = TransformToTf(q_w_cam, t_w_cam);
-    Eigen::Matrix4d Final_transform = Eigen::Matrix4d::Identity();
-    Final_transform.block(0,0,3,3) = q_w_curr.toRotationMatrix();
-    Final_transform.block(0,3,3,1) = t_w_curr;
-
-    w_tf_c = TransformToTf(q_w_curr, t_w_curr);    
-    std::cout << "Final transform matrix is: \n" << Final_transform << std::endl;
-    PrintEulerAnglesDegreeAndTranslation(Final_transform);
     
-    return Final_transform;
+    /* Trick: for checking the pose error of fine registration
+     * NOTE that q_w_curr and t_w_curr have been changed
+     */
+    Eigen::Vector3d final_regitration_trans = t_w_curr;
+    Eigen::Matrix3d fine_registration_rotation = q_w_curr.toRotationMatrix();
+    Eigen::Vector3d fine_registration_angles = fine_registration_rotation.eulerAngles(0, 1, 2);
+    Eigen::Vector3d fine_registration_angles_degree = fine_registration_angles * rad2deg; // rad to degree;
+    const double min_registration_angle_error = 10.0;
+    const double min_registration_trans_error = 0.8;
+    for (int i = 0; i < 3; i++)
+    {
+        if (std::abs(fine_registration_angles_degree(i) - coarse_registration_angles_degree(i)) >= min_registration_angle_error)
+            fine_registration_angles_degree(i) = coarse_registration_angles_degree(i);
+        if (std::abs(final_regitration_trans(i) - coarse_registration_trans(i)) >= min_registration_trans_error)
+            final_regitration_trans(i) = (final_regitration_trans(i) - coarse_registration_trans(i)) / 2; // correct half of the pose difference
+    }
+        
+    Eigen::AngleAxisf final_rotation_z (fine_registration_angles_degree(2) * deg2rad, Eigen::Vector3f::UnitZ ());
+    Eigen::AngleAxisf final_rotation_y (fine_registration_angles_degree(1) * deg2rad, Eigen::Vector3f::UnitY ());
+    Eigen::AngleAxisf final_rotation_x (fine_registration_angles_degree(0) * deg2rad, Eigen::Vector3f::UnitX ());
+    Eigen::Matrix4d final_transform = Eigen::Matrix4d::Identity();
+    Eigen::Matrix3d final_rotation = ((final_rotation_x * final_rotation_y * final_rotation_z).matrix()).cast<double>();
+    
+    final_transform.block(0,0,3,3) = final_rotation;
+    final_transform.block(0,3,3,1) = final_regitration_trans;
+    std::cout << "Final transform matrix is: \n" << final_transform << std::endl;
+    PrintEulerAnglesDegreeAndTranslation(final_transform);
+    
+    // update tf
+    q_w_curr = Eigen::Quaterniond (final_rotation);
+    t_w_curr = final_regitration_trans;
+    w_tf_c = TransformToTf(q_w_curr, t_w_curr);    
+    
+    return final_transform;
 }
 
 void InitialPoseLastHandler (const geometry_msgs::PoseStamped::ConstPtr& init_pose_last)
