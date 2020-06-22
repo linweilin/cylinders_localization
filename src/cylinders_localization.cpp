@@ -908,7 +908,6 @@ Eigen::Matrix4d FineRegistration(std::vector<Line> &input_line, std::vector<Line
     std::cout << std::endl;
     
     // for checking the pose error of fine registration
-    Eigen::Vector3d coarse_registration_trans = T_before_optimized.block(0,3,3,1);
     Eigen::Matrix3d coarse_registration_rot = T_before_optimized.block(0,0,3,3);
     Eigen::Vector3d coarse_registration_angles = coarse_registration_rot.eulerAngles(0, 1, 2);
     Eigen::Vector3d coarse_registration_angles_degree = coarse_registration_angles * rad2deg; // rad to degree;
@@ -981,18 +980,23 @@ Eigen::Matrix4d FineRegistration(std::vector<Line> &input_line, std::vector<Line
     /* Trick: for checking the pose error of fine registration
      * NOTE that q_w_curr and t_w_curr have been changed
      */
+    Eigen::Vector3d initial_translation = initial_transform_matrix.block(0,3,3,1);
     Eigen::Vector3d final_regitration_trans = t_w_curr;
     Eigen::Matrix3d fine_registration_rotation = q_w_curr.toRotationMatrix();
     Eigen::Vector3d fine_registration_angles = fine_registration_rotation.eulerAngles(0, 1, 2);
     Eigen::Vector3d fine_registration_angles_degree = fine_registration_angles * rad2deg; // rad to degree;
     const double min_registration_angle_error = 10.0;
-    const double min_registration_trans_error = 0.8;
+    const double min_registration_trans_error = 0.08;
     for (int i = 0; i < 3; i++)
     {
         if (std::abs(fine_registration_angles_degree(i) - coarse_registration_angles_degree(i)) >= min_registration_angle_error)
             fine_registration_angles_degree(i) = coarse_registration_angles_degree(i);
-        if (std::abs(final_regitration_trans(i) - coarse_registration_trans(i)) >= min_registration_trans_error)
-            final_regitration_trans(i) = (final_regitration_trans(i) - coarse_registration_trans(i)) / 2; // correct half of the pose difference
+        if (std::abs(final_regitration_trans(i) - initial_translation(i)) >= min_registration_trans_error)
+            if (final_regitration_trans(i) >= initial_translation(i))
+                final_regitration_trans(i) = final_regitration_trans(i) - std::abs(final_regitration_trans(i) - initial_translation(i)) * 1.0/2.0 ; // correct half of the pose difference
+            else
+                final_regitration_trans(i) = final_regitration_trans(i) + std::abs(final_regitration_trans(i) - initial_translation(i)) * 1.0/2.0 ; // correct half of the pose difference
+            final_regitration_trans(i) = final_regitration_trans(i) - (final_regitration_trans(i) - initial_translation(i)) * 2.0/3.0; // correct one third of the pose difference
     }
         
     Eigen::AngleAxisf final_rotation_z (fine_registration_angles_degree(2) * deg2rad, Eigen::Vector3f::UnitZ ());
