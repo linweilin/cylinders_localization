@@ -35,9 +35,9 @@ https://pan.baidu.com/s/10s3b-TK08dTx7vCz7Z6j7A
 ## 4. To execute the program:
 4.1 Open three terminal:
 
-    - run `$ rosrun cylinders_localization cylinders_localization` **in YOUR_PATH_TO_PACKAGE**.
-    - run `$ roslaunch cylinders_localization cylinders_localization.launch` to open rviz.
-    - run `$ rosbag play -l YOUR_PATH_TO_DATASET/truss_328_3_poles.bag`.
+- run `$ rosrun cylinders_localization cylinders_localization` **in YOUR_PATH_TO_PACKAGE**.
+- run `$ roslaunch cylinders_localization cylinders_localization.launch` to open rviz.
+- run `$ rosbag play -l YOUR_PATH_TO_DATASET/truss_328_3_poles.bag`.
     
 ## NOTE
 
