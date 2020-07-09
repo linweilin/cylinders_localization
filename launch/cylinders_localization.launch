@@ -5,11 +5,13 @@
     
     <node name="rviz" pkg="rviz" type="rviz" args="-d $(arg rviz_path)/rviz_config.rviz"> </node>
     
+    <!--
     <node name="cylinders_localization" pkg="cylinders_localization" type="cylinders_localization" output="screen">
         <param name="extrinsic_file" type="string" value="$(arg data_path)/mTc.txt" />
         <param name="global_map" type="string" value="$(arg data_path)/bim_vector_map.txt" />
         <param name="parameters_file" type="string" value="$(arg data_path)/parameters.txt" />
     </node>
+    -->
     
     <node name="pcd_to_pointcloud" pkg="pcl_ros" type="pcd_to_pointcloud" args="$(arg data_path)/data/truss328_200701.pcd _frame_id:=world 0.1"> </node>
          
